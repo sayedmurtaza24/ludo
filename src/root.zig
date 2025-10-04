@@ -101,142 +101,81 @@ test Game {
 
     try expectEqual(active_team.pieces, .{ 55, 5, -1, -1 });
     try expectEqual(game.curr_team.color, .green);
+
+    var i: TableIndexes = .init;
+
+    i.print();
+    i.indexOfAtPos(team_red, @enumFromInt(0));
 }
 
 const table =
-    \\ [ ][ ][ ][ ][ ][ ][x][x][x][ ][ ][ ][ ][ ][ ]
-    \\ [ ][b][ ][b][ ][ ][x][y][x][ ][ ][y][ ][y][ ]
-    \\ [ ][ ][ ][ ][ ][ ][x][y][x][ ][ ][ ][ ][ ][ ]
-    \\ [ ][b][ ][b][ ][ ][x][y][x][ ][ ][y][ ][y][ ]
-    \\ [ ][ ][ ][ ][ ][ ][x][y][x][ ][ ][ ][ ][ ][ ]
-    \\ [ ][ ][ ][ ][ ][ ][x][y][x][ ][ ][ ][ ][ ][ ]
-    \\ [x][x][x][x][x][x][ ][h][ ][x][x][x][x][x][x]
-    \\ [x][b][b][b][b][b][h][ ][h][g][g][g][g][g][x]
-    \\ [x][x][x][x][x][x][ ][h][ ][x][x][x][x][x][x]
-    \\ [ ][ ][ ][ ][ ][ ][x][r][x][ ][ ][ ][ ][ ][ ]
-    \\ [ ][ ][ ][ ][ ][ ][x][r][x][ ][ ][ ][ ][ ][ ]
-    \\ [ ][r][ ][r][ ][ ][x][r][x][ ][ ][g][ ][g][ ]
-    \\ [ ][ ][ ][ ][ ][ ][x][r][x][ ][ ][ ][ ][ ][ ]
-    \\ [ ][r][ ][r][ ][ ][s][r][x][ ][ ][g][ ][g][ ]
-    \\ [ ][ ][ ][ ][ ][ ][e][x][x][ ][ ][ ][ ][ ][ ]
+    \\ [ ][ ][ ][ ][ ][ ][X][Y][Z][ ][ ][ ][ ][ ][ ]
+    \\ [ ][!][ ][!][ ][ ][W][ ][a][ ][ ][@][ ][@][ ]
+    \\ [ ][ ][ ][ ][ ][ ][V][ ][b][ ][ ][ ][ ][ ][ ]
+    \\ [ ][!][ ][!][ ][ ][U][ ][c][ ][ ][@][ ][@][ ]
+    \\ [ ][ ][ ][ ][ ][ ][T][ ][d][ ][ ][ ][ ][ ][ ]
+    \\ [ ][ ][ ][ ][ ][ ][S][ ][e][ ][ ][ ][ ][ ][ ]
+    \\ [M][N][O][P][Q][R][ ][ ][ ][f][g][h][i][j][k]
+    \\ [L][ ][ ][ ][ ][ ][ ][ ][ ][ ][ ][ ][ ][ ][l]
+    \\ [K][J][I][H][G][F][ ][ ][ ][r][q][p][o][n][m]
+    \\ [ ][ ][ ][ ][ ][ ][E][ ][s][ ][ ][ ][ ][ ][ ]
+    \\ [ ][ ][ ][ ][ ][ ][D][ ][t][ ][ ][ ][ ][ ][ ]
+    \\ [ ][#][ ][#][ ][ ][C][ ][u][ ][ ][$][ ][$][ ]
+    \\ [ ][ ][ ][ ][ ][ ][B][ ][v][ ][ ][ ][ ][ ][ ]
+    \\ [ ][#][ ][#][ ][ ][A][ ][w][ ][ ][$][ ][$][ ]
+    \\ [ ][ ][ ][ ][ ][ ][z][y][x][ ][ ][ ][ ][ ][ ]
     \\
 ;
 
 const TableIndexes = struct {
-    red_path_indexes: [58]usize = blk: {
-        var idx = std.mem.indexOfScalar(u8, table, 's').?;
+    table_copy: [705]u8,
+    path_indexes: [52]usize,
+    home_indexes: [16]usize,
 
-        var indexes: [58]usize = undefined;
-        indexes[0] = idx;
+    const init: TableIndexes = blk: {
+        var indexes: [52]usize = undefined;
 
-        @setEvalBranchQuota(10_000);
-        for (1..57) |i| {
-            idx = nextX(i, indexes, idx, false) orelse break;
-            indexes[i] = idx;
+        @setEvalBranchQuota(50_000);
+        for ('A'..'Z' + 1, 0..) |c, i| {
+            indexes[i] = std.mem.indexOfScalar(u8, table, c).?;
+        }
+        for ('a'..'z' + 1, 'Z' + 1 - 'A'..) |c, i| {
+            indexes[i] = std.mem.indexOfScalar(u8, table, c).?;
         }
 
-        break :blk indexes;
-    },
+        var table_copy = table.*;
+        for (indexes) |i| {
+            table_copy[i] = ' ';
+        }
 
-    const init: TableIndexes = .{};
-
-    fn isCorrect(iter: usize, prev: [58]usize, idx: ?usize) bool {
-        if (idx) |i| {
-            for (0..iter - 1) |pi| {
-                if (i == prev[pi]) return false;
+        var home_indexes: [16]usize = undefined;
+        for (.{ '!', '@', '#', '$' }, 0..) |h, offset| {
+            for (offset * 4..offset * 4 + 4) |i| {
+                const idx = std.mem.indexOfScalar(u8, &table_copy, h).?;
+                home_indexes[i] = idx;
+                table_copy[idx] = ' ';
             }
-            return true;
-        } else {
-            return false;
         }
+
+        break :blk .{
+            .table_copy = table_copy,
+            .path_indexes = indexes,
+            .home_indexes = home_indexes,
+        };
+    };
+
+    fn indexOfAtPos(self: *@This(), game: *Game, team: *Team, piece: Piece) usize {
+        const piece_idx = @intFromEnum(piece);
+        const pos = team.pieces[piece_idx];
+
+        if (pos == -1) {}
     }
 
-    fn nextX(iter: usize, prev: [58]usize, idx: usize, next: bool) ?usize {
-        const lineLen = table.len / 15;
-
-        const up: ?usize = blk: {
-            if (lineLen > idx) break :blk null;
-            if (table[idx - lineLen] == 'x') {
-                break :blk idx - lineLen;
-            } else {
-                break :blk null;
-            }
-        };
-        if (isCorrect(iter, prev, up)) return up;
-
-        const down: ?usize = blk: {
-            if (lineLen + idx > table.len) break :blk null;
-            if (table[idx + lineLen] == 'x') {
-                break :blk idx + lineLen;
-            } else {
-                break :blk null;
-            }
-        };
-        if (isCorrect(iter, prev, down)) return down;
-
-        const left: ?usize = blk: {
-            if (idx < 3) break :blk null;
-            if (table[idx - 3] == 'x') {
-                break :blk idx - 3;
-            } else {
-                break :blk null;
-            }
-        };
-        if (isCorrect(iter, prev, left)) return left;
-
-        const right: ?usize = blk: {
-            if (idx + 3 > table.len) break :blk null;
-            if (table[idx + 3] == 'x') {
-                break :blk idx + 3;
-            } else {
-                break :blk null;
-            }
-        };
-        if (isCorrect(iter, prev, right)) return right;
-
-        const topleft: ?usize = blk: {
-            if (idx - lineLen - 3 < table.len) break :blk null;
-            if (table[idx - lineLen - 3] == 'x') {
-                break :blk idx - lineLen - 3;
-            } else {
-                break :blk null;
-            }
-        };
-        if (isCorrect(iter, prev, topleft)) return topleft;
-
-        const topright: ?usize = blk: {
-            if (idx - lineLen + 3 > table.len) break :blk null;
-            if (table[idx - lineLen + 3] == 'x') {
-                break :blk idx - lineLen + 3;
-            } else {
-                break :blk null;
-            }
-        };
-        if (isCorrect(iter, prev, topright)) return topright;
-
-        if (!next) {
-            return nextX(iter, prev, idx, true);
-        }
-
-        return null;
-    }
-
-    fn print(self: @This()) void {
-        var tableCopy = table.*;
-
-        for (self.red_path_indexes, 0..) |i, x| {
-            if (i != 0) tableCopy[i] = '0' + @as(u8, @intCast(x));
-        }
-
-        std.debug.print("{any}", .{self.red_path_indexes});
-        std.debug.print("{s}", .{tableCopy});
+    fn print(self: *@This()) void {
+        std.debug.print("{s}", .{self.table_copy});
     }
 };
 
-test TableIndexes {
-    const i: TableIndexes = .init;
-
-    i.print();
-}
+test TableIndexes {}
 
 fn findNextMove() i7 {}
