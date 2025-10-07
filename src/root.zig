@@ -102,22 +102,33 @@ test Game {
     try expectEqual(active_team.pieces, .{ 55, 5, -1, -1 });
     try expectEqual(game.curr_team.color, .green);
 
-    var i: TableIndexes = .init;
+    var board: Board = .init;
 
-    i.print();
-    i.indexOfAtPos(team_red, @enumFromInt(0));
+    game.teams[0].pieces = .{ -1, 0, 1, 2 };
+    game.teams[1].pieces = .{ -1, 0, 1, 2 };
+    game.teams[2].pieces = .{ -1, 0, 1, 2 };
+    game.teams[3].pieces = .{ -1, 0, 1, 2 };
+
+    for (game.teams, 0..) |t, x| {
+        const indexes = board.indexes(t, x);
+        for (indexes) |idx| {
+            board.map[idx] = '◉';
+        }
+    }
+
+    board.print(std.testing.allocator);
 }
 
-const table =
+const board_map =
     \\ [ ][ ][ ][ ][ ][ ][X][Y][Z][ ][ ][ ][ ][ ][ ]
     \\ [ ][!][ ][!][ ][ ][W][ ][a][ ][ ][@][ ][@][ ]
     \\ [ ][ ][ ][ ][ ][ ][V][ ][b][ ][ ][ ][ ][ ][ ]
     \\ [ ][!][ ][!][ ][ ][U][ ][c][ ][ ][@][ ][@][ ]
     \\ [ ][ ][ ][ ][ ][ ][T][ ][d][ ][ ][ ][ ][ ][ ]
     \\ [ ][ ][ ][ ][ ][ ][S][ ][e][ ][ ][ ][ ][ ][ ]
-    \\ [M][N][O][P][Q][R][ ][ ][ ][f][g][h][i][j][k]
-    \\ [L][ ][ ][ ][ ][ ][ ][ ][ ][ ][ ][ ][ ][ ][l]
-    \\ [K][J][I][H][G][F][ ][ ][ ][r][q][p][o][n][m]
+    \\ [M][N][O][P][Q][R][ ][.][ ][f][g][h][i][j][k]
+    \\ [L][ ][ ][ ][ ][ ][.][ ][.][ ][ ][ ][ ][ ][l]
+    \\ [K][J][I][H][G][F][ ][.][ ][r][q][p][o][n][m]
     \\ [ ][ ][ ][ ][ ][ ][E][ ][s][ ][ ][ ][ ][ ][ ]
     \\ [ ][ ][ ][ ][ ][ ][D][ ][t][ ][ ][ ][ ][ ][ ]
     \\ [ ][#][ ][#][ ][ ][C][ ][u][ ][ ][$][ ][$][ ]
@@ -127,55 +138,63 @@ const table =
     \\
 ;
 
-const TableIndexes = struct {
-    table_copy: [705]u8,
+const Board = struct {
+    map: [705]u16,
     path_indexes: [52]usize,
     home_indexes: [16]usize,
 
-    const init: TableIndexes = blk: {
-        var indexes: [52]usize = undefined;
+    const init: Board = blk: {
+        var red_indexes: [52]usize = undefined;
 
         @setEvalBranchQuota(50_000);
         for ('A'..'Z' + 1, 0..) |c, i| {
-            indexes[i] = std.mem.indexOfScalar(u8, table, c).?;
+            red_indexes[i] = std.mem.indexOfScalar(u8, board_map, c).?;
         }
         for ('a'..'z' + 1, 'Z' + 1 - 'A'..) |c, i| {
-            indexes[i] = std.mem.indexOfScalar(u8, table, c).?;
-        }
-
-        var table_copy = table.*;
-        for (indexes) |i| {
-            table_copy[i] = ' ';
+            red_indexes[i] = std.mem.indexOfScalar(u8, board_map, c).?;
         }
 
         var home_indexes: [16]usize = undefined;
-        for (.{ '!', '@', '#', '$' }, 0..) |h, offset| {
+        for (.{ '#', '!', '@', '$' }, 0..) |h, offset| {
+            var prev: usize = 0;
             for (offset * 4..offset * 4 + 4) |i| {
-                const idx = std.mem.indexOfScalar(u8, &table_copy, h).?;
-                home_indexes[i] = idx;
-                table_copy[idx] = ' ';
+                home_indexes[i] = std.mem.indexOfScalarPos(u8, board_map, prev + 1, h).?;
+                prev = home_indexes[i];
             }
         }
 
+        var map: [705]u16 = undefined;
+
+        _ = std.unicode.utf8ToUtf16Le(&map, board_map) catch unreachable;
+
+        for (red_indexes) |i| map[i] = ' ';
+        for (home_indexes) |i| map[i] = ' ';
+
         break :blk .{
-            .table_copy = table_copy,
-            .path_indexes = indexes,
+            .map = map,
+            .path_indexes = red_indexes,
             .home_indexes = home_indexes,
         };
     };
 
-    fn indexOfAtPos(self: *@This(), game: *Game, team: *Team, piece: Piece) usize {
-        const piece_idx = @intFromEnum(piece);
-        const pos = team.pieces[piece_idx];
-
-        if (pos == -1) {}
+    fn indexes(self: *@This(), team: *const Team, idx: usize) [4]usize {
+        var o: [4]usize = undefined;
+        for (team.pieces, 0..) |pos, piece_idx| {
+            if (pos == -1) {
+                o[piece_idx] = self.home_indexes[(4 * idx) + piece_idx];
+            } else {
+                o[piece_idx] = self.path_indexes[((13 * idx) + @as(usize, @intCast(pos))) % 52];
+            }
+        }
+        return o;
     }
 
-    fn print(self: *@This()) void {
-        std.debug.print("{s}", .{self.table_copy});
+    fn print(self: *@This(), allocator: std.mem.Allocator) void {
+        const map = std.unicode.utf16LeToUtf8Alloc(allocator, &self.map) catch unreachable;
+        defer allocator.free(map);
+
+        std.debug.print("{s}", .{map});
     }
 };
-
-test TableIndexes {}
 
 fn findNextMove() i7 {}
