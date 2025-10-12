@@ -102,51 +102,51 @@ test Game {
     try expectEqual(active_team.pieces, .{ 55, 5, -1, -1 });
     try expectEqual(game.curr_team.color, .green);
 
-    var board: Board = .init;
+    const board: Board = .init;
 
-    game.teams[0].pieces = .{ -1, 0, 1, 2 };
-    game.teams[1].pieces = .{ -1, 0, 1, 2 };
-    game.teams[2].pieces = .{ -1, 0, 1, 2 };
-    game.teams[3].pieces = .{ -1, 0, 1, 2 };
+    game.teams[0].pieces = .{ -1, -1, -1, -1 };
+    game.teams[1].pieces = .{ -1, -1, -1, -1 };
+    game.teams[2].pieces = .{ -1, -1, -1, -1 };
+    game.teams[3].pieces = .{ -1, -1, -1, -1 };
 
-    for (game.teams, 0..) |t, x| {
-        const indexes = board.indexes(t, x);
-        for (indexes) |idx| {
-            board.map[idx] = '◉';
-        }
-    }
-
-    board.print(std.testing.allocator);
+    var print_buf: [2048]u8 = undefined;
+    // for (teams) |team| {
+    //     for (0..56) |i| {
+    //         team.pieces[3] = @intCast(i);
+    try board.print(&print_buf, game.teams);
+    //     }
+    // }
 }
 
 const board_map =
     \\ [ ][ ][ ][ ][ ][ ][X][Y][Z][ ][ ][ ][ ][ ][ ]
-    \\ [ ][!][ ][!][ ][ ][W][ ][a][ ][ ][@][ ][@][ ]
-    \\ [ ][ ][ ][ ][ ][ ][V][ ][b][ ][ ][ ][ ][ ][ ]
-    \\ [ ][!][ ][!][ ][ ][U][ ][c][ ][ ][@][ ][@][ ]
-    \\ [ ][ ][ ][ ][ ][ ][T][ ][d][ ][ ][ ][ ][ ][ ]
-    \\ [ ][ ][ ][ ][ ][ ][S][ ][e][ ][ ][ ][ ][ ][ ]
+    \\ [ ][!][ ][!][ ][ ][W][.][a][ ][ ][@][ ][@][ ]
+    \\ [ ][ ][ ][ ][ ][ ][V][.][b][ ][ ][ ][ ][ ][ ]
+    \\ [ ][!][ ][!][ ][ ][U][.][c][ ][ ][@][ ][@][ ]
+    \\ [ ][ ][ ][ ][ ][ ][T][.][d][ ][ ][ ][ ][ ][ ]
+    \\ [ ][ ][ ][ ][ ][ ][S][.][e][ ][ ][ ][ ][ ][ ]
     \\ [M][N][O][P][Q][R][ ][.][ ][f][g][h][i][j][k]
-    \\ [L][ ][ ][ ][ ][ ][.][ ][.][ ][ ][ ][ ][ ][l]
+    \\ [L][.][.][.][.][.][.][ ][.][.][.][.][.][.][l]
     \\ [K][J][I][H][G][F][ ][.][ ][r][q][p][o][n][m]
-    \\ [ ][ ][ ][ ][ ][ ][E][ ][s][ ][ ][ ][ ][ ][ ]
-    \\ [ ][ ][ ][ ][ ][ ][D][ ][t][ ][ ][ ][ ][ ][ ]
-    \\ [ ][#][ ][#][ ][ ][C][ ][u][ ][ ][$][ ][$][ ]
-    \\ [ ][ ][ ][ ][ ][ ][B][ ][v][ ][ ][ ][ ][ ][ ]
-    \\ [ ][#][ ][#][ ][ ][A][ ][w][ ][ ][$][ ][$][ ]
+    \\ [ ][ ][ ][ ][ ][ ][E][.][s][ ][ ][ ][ ][ ][ ]
+    \\ [ ][ ][ ][ ][ ][ ][D][.][t][ ][ ][ ][ ][ ][ ]
+    \\ [ ][#][ ][#][ ][ ][C][.][u][ ][ ][$][ ][$][ ]
+    \\ [ ][ ][ ][ ][ ][ ][B][.][v][ ][ ][ ][ ][ ][ ]
+    \\ [ ][#][ ][#][ ][ ][A][.][w][ ][ ][$][ ][$][ ]
     \\ [ ][ ][ ][ ][ ][ ][z][y][x][ ][ ][ ][ ][ ][ ]
     \\
 ;
 
-const Board = struct {
-    map: [705]u16,
+pub const Board = struct {
+    map: [board_map.len]u8,
     path_indexes: [52]usize,
     home_indexes: [16]usize,
+    in_indexes: [24]usize,
 
-    const init: Board = blk: {
-        var red_indexes: [52]usize = undefined;
-
+    pub const init: Board = blk: {
         @setEvalBranchQuota(50_000);
+
+        var red_indexes: [52]usize = undefined;
         for ('A'..'Z' + 1, 0..) |c, i| {
             red_indexes[i] = std.mem.indexOfScalar(u8, board_map, c).?;
         }
@@ -163,38 +163,138 @@ const Board = struct {
             }
         }
 
-        var map: [705]u16 = undefined;
+        var in_indexes: [24]usize = undefined;
+        for (0..24) |i| {
+            const prev: usize = if (i == 0) 0 else in_indexes[i - 1] + 1;
+            in_indexes[i] = std.mem.indexOfScalarPos(u8, board_map, prev, '.').?;
+        }
 
-        _ = std.unicode.utf8ToUtf16Le(&map, board_map) catch unreachable;
+        var map: [board_map.len]u8 = board_map.*;
 
         for (red_indexes) |i| map[i] = ' ';
         for (home_indexes) |i| map[i] = ' ';
+        for (in_indexes) |i| map[i] = ' ';
 
         break :blk .{
             .map = map,
             .path_indexes = red_indexes,
             .home_indexes = home_indexes,
+            .in_indexes = in_indexes,
         };
     };
 
-    fn indexes(self: *@This(), team: *const Team, idx: usize) [4]usize {
+    fn indexes(self: *const @This(), team: *const Team, idx: usize) [4]usize {
         var o: [4]usize = undefined;
         for (team.pieces, 0..) |pos, piece_idx| {
             if (pos == -1) {
                 o[piece_idx] = self.home_indexes[(4 * idx) + piece_idx];
-            } else {
+            } else if (pos >= 0 and pos <= 50) {
                 o[piece_idx] = self.path_indexes[((13 * idx) + @as(usize, @intCast(pos))) % 52];
+            } else {
+                o[piece_idx] = switch (idx) {
+                    0 => self.in_indexes[self.in_indexes.len - 6 ..][55 - @as(usize, @intCast(pos))],
+                    1 => self.in_indexes[6 .. 6 + 6][@as(usize, @intCast(pos)) - 50],
+                    2 => self.in_indexes[0..6][@as(usize, @intCast(pos)) - 50],
+                    3 => self.in_indexes[2 * 6 .. 2 * 6 + 6][55 - @as(usize, @intCast(pos))],
+                    else => unreachable,
+                };
             }
         }
         return o;
     }
 
-    fn print(self: *@This(), allocator: std.mem.Allocator) void {
-        const map = std.unicode.utf16LeToUtf8Alloc(allocator, &self.map) catch unreachable;
-        defer allocator.free(map);
+    const Printable = struct {
+        marker: []const u8,
+        pos: usize,
+    };
 
-        std.debug.print("{s}", .{map});
+    pub fn print(self: *const @This(), buf: []u8, teams: []*Team) !void {
+        var printables: [16 + 8]Printable = undefined;
+
+        for (teams, 0..) |team, i| {
+            for (self.indexes(team, i), 0..) |pos, offset| {
+                printables[i * teams.len + offset] = .{
+                    .marker = colored("◉", team.color),
+                    .pos = pos,
+                };
+            }
+        }
+
+        var p: usize = 0;
+        for (0..8) |i| {
+            const color: Color = switch (i) {
+                0...1 => .red,
+                2...3 => .green,
+                4...5 => .blue,
+                else => .yellow,
+            };
+            if (i % 2 == 0) {
+                printables[16 + i] = .{
+                    .marker = colored("⌂", color),
+                    .pos = self.path_indexes[p],
+                };
+            } else {
+                printables[16 + i] = .{
+                    .marker = "☆",
+                    .pos = self.path_indexes[p],
+                };
+            }
+            p += if (i % 2 == 0) 8 else 5;
+        }
+
+        std.mem.sort(Printable, &printables, {}, sortPosColor);
+
+        var last_pos: usize = 0;
+        var written: usize = 0;
+
+        for (printables) |pr| {
+            if (last_pos > pr.pos) continue;
+
+            const board_part = self.map[last_pos..pr.pos];
+            written += try dimmed(buf[written..], board_part);
+
+            @memcpy(buf[written .. written + pr.marker.len], pr.marker);
+            written += pr.marker.len;
+
+            last_pos = pr.pos + 1;
+        }
+
+        const board_part = self.map[last_pos..self.map.len];
+        written += try dimmed(buf[written..], board_part);
+
+        std.debug.print("{s}\n", .{buf[0..written]});
+    }
+
+    fn sortPosColor(_: void, a: Printable, b: Printable) bool {
+        return std.sort.asc(usize)({}, a.pos, b.pos);
+    }
+
+    fn dimmed(buf: []u8, s: []const u8) !usize {
+        var w: std.Io.Writer = .fixed(buf);
+        var r: std.Io.Reader = .fixed(s);
+
+        var size: usize = 0;
+
+        while (true) {
+            size += try w.write("\x1b[2m");
+            size += try r.streamDelimiterEnding(&w, '\n');
+            size += try w.write("\x1b[0m");
+
+            if ((r.peekByte() catch break) == '\n') {
+                try r.streamExact(&w, 1);
+                size += 1;
+            }
+        }
+
+        return size;
+    }
+
+    fn colored(comptime s: []const u8, color: Color) []const u8 {
+        return switch (color) {
+            .red => std.fmt.comptimePrint("\x1b[31m{s}\x1b[0m", .{s}),
+            .green => std.fmt.comptimePrint("\x1b[32m{s}\x1b[0m", .{s}),
+            .yellow => std.fmt.comptimePrint("\x1b[33m{s}\x1b[0m", .{s}),
+            .blue => std.fmt.comptimePrint("\x1b[34m{s}\x1b[0m", .{s}),
+        };
     }
 };
-
-fn findNextMove() i7 {}
