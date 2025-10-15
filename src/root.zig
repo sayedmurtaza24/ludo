@@ -22,6 +22,14 @@ pub const Game = struct {
     dice_rolled: bool = false,
     dice_num: u3 = 0,
 
+    const safeIndexes = blk: {
+        var p: @Vector(8, i7) = @splat(0);
+        for (1..8) |i| {
+            p[i] = p[i - 1] + if (i % 2 == 0) 8 else 5;
+        }
+        break :blk p;
+    };
+
     const Self = @This();
 
     pub fn init(teams: []*Team) Game {
@@ -34,16 +42,24 @@ pub const Game = struct {
         self.dice_rolled = true;
     }
 
-    pub fn availableMoves(self: *Self) [4]bool {
-        if (!self.dice_rolled) return .{false} ** 4;
+    pub fn availableMoves(self: *Self) @Vector(4, bool) {
+        if (!self.dice_rolled) return @splat(false);
 
         var moves: [4]bool = undefined;
         for (self.curr_team.pieces, 0..) |piece, i| {
-            moves[i] = self.dice_rolled and
+            moves[i] =
                 (piece != -1 or self.dice_num == 6) and
                 (piece + self.dice_num < total_available_moves);
         }
         return moves;
+    }
+
+    pub fn next(self: *Self) void {
+        assert(self.dice_num != 0 and self.dice_rolled == true);
+        self.dice_rolled = false;
+
+        const curr_team_idx = std.mem.indexOfScalar(*Team, self.teams, self.curr_team).?;
+        self.curr_team = self.teams[(curr_team_idx + 1) % self.teams.len];
     }
 
     pub fn move(self: *Self, piece_idx: Piece) void {
@@ -53,16 +69,20 @@ pub const Game = struct {
         assert(self.dice_num != 0 and self.dice_rolled == true);
         assert(curr_piece + self.dice_num < total_available_moves);
 
-        self.dice_rolled = false;
-        self.curr_team.pieces[@intFromEnum(piece_idx)] += self.dice_num;
+        if (curr_piece == -1) {
+            self.curr_team.pieces[@intFromEnum(piece_idx)] = 0;
+        } else {
+            self.curr_team.pieces[@intFromEnum(piece_idx)] += self.dice_num;
+        }
 
-        const curr_team_idx = std.mem.indexOfScalar(*Team, self.teams, self.curr_team).?;
-        self.curr_team = self.teams[(curr_team_idx + 1) % self.teams.len];
+        const new_pos = self.curr_team.pieces[@intFromEnum(piece_idx)];
+        if (isSafe(new_pos)) {
+            std.debug.print("safe place\n", .{});
+        }
     }
 
-    pub fn format(self: *Self, writer: std.Io.Writer) !void {
-        _ = self;
-        _ = writer;
+    pub fn isSafe(pos: i7) bool {
+        return std.simd.firstIndexOfValue(safeIndexes, pos) != null;
     }
 };
 

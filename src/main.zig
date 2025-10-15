@@ -5,6 +5,7 @@ const lib = @import("ludo");
 const Team = lib.Team;
 const Game = lib.Game;
 const Board = lib.Board;
+const Piece = lib.Piece;
 
 pub fn main() !void {
     var team_red: Team = .init(.red);
@@ -23,18 +24,27 @@ pub fn main() !void {
 
     const board: Board = .init;
 
-    game.teams[0].pieces = .{ -1, -1, -1, -1 };
-    game.teams[1].pieces = .{ -1, -1, -1, -1 };
-    game.teams[2].pieces = .{ -1, -1, -1, -1 };
-    game.teams[3].pieces = .{ -1, -1, -1, -1 };
-
     var print_buf: [2048]u8 = undefined;
-    for (teams) |team| {
-        for (0..56) |i| {
-            team.pieces[3] = @intCast(i);
-            try board.print(&print_buf, game.teams);
+    for (0..100) |_| {
+        game.rollDice();
 
-            std.Thread.sleep(30 * 1000 * 1000);
+        std.debug.print("{s}: DICE {}\n", .{ @tagName(game.curr_team.color), game.dice_num });
+
+        const moves = game.availableMoves();
+
+        std.debug.print("{s}: MOVES {any}\n", .{ @tagName(game.curr_team.color), moves });
+
+        if (std.simd.firstTrue(moves)) |idx| {
+            std.debug.print("{s}: MOVING {}\n", .{ @tagName(game.curr_team.color), idx });
+
+            game.move(@enumFromInt(idx));
         }
+
+        std.debug.print("{s}: NEXT\n", .{@tagName(game.curr_team.color)});
+        game.next();
+
+        try board.print(&print_buf, game.teams);
+
+        std.Thread.sleep(2000 * 1000 * 1000);
     }
 }
