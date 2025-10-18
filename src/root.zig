@@ -1,7 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-const total_available_moves = 56;
+const total_available_moves = 55;
 
 pub const Piece = enum(u2) { _ };
 pub const Color = enum { red, green, blue, yellow };
@@ -9,6 +9,7 @@ pub const Color = enum { red, green, blue, yellow };
 pub const Team = struct {
     pieces: [4]i7 = .{ -1, -1, -1, -1 },
     color: Color,
+    ended_at: isize = -1,
 
     pub fn init(color: Color) Team {
         return .{ .color = color };
@@ -16,16 +17,20 @@ pub const Team = struct {
 };
 
 pub const Game = struct {
+    move_num: isize = 0,
+
     teams: []*Team,
     curr_team: *Team,
 
     dice_rolled: bool = false,
     dice_num: u3 = 0,
 
+    ended: bool = false,
+
     const safeIndexes = blk: {
-        var p: @Vector(8, i7) = @splat(0);
+        var p: [8]i7 = @splat(0);
         for (1..8) |i| {
-            p[i] = p[i - 1] + if (i % 2 == 0) 8 else 5;
+            p[i] = p[i - 1] + if (i % 2 != 0) 8 else 5;
         }
         break :blk p;
     };
@@ -42,14 +47,14 @@ pub const Game = struct {
         self.dice_rolled = true;
     }
 
-    pub fn availableMoves(self: *Self) @Vector(4, bool) {
+    pub fn availableMoves(self: *Self) [4]bool {
         if (!self.dice_rolled) return @splat(false);
 
         var moves: [4]bool = undefined;
         for (self.curr_team.pieces, 0..) |piece, i| {
             moves[i] =
                 (piece != -1 or self.dice_num == 6) and
-                (piece + self.dice_num < total_available_moves);
+                (piece + self.dice_num <= total_available_moves);
         }
         return moves;
     }
@@ -57,17 +62,31 @@ pub const Game = struct {
     pub fn next(self: *Self) void {
         assert(self.dice_num != 0 and self.dice_rolled == true);
         self.dice_rolled = false;
+        self.move_num += 1;
 
-        const curr_team_idx = std.mem.indexOfScalar(*Team, self.teams, self.curr_team).?;
-        self.curr_team = self.teams[(curr_team_idx + 1) % self.teams.len];
+        if (self.dice_num != 6) {
+            for (0..self.teams.len - 1) |_| {
+                const curr_team_idx = std.mem.indexOfScalar(*Team, self.teams, self.curr_team).?;
+                self.curr_team = self.teams[(curr_team_idx + 1) % self.teams.len];
+
+                if (hasWon(self.curr_team)) {
+                    if (self.curr_team.ended_at == -1) self.curr_team.ended_at = self.move_num;
+                    continue;
+                } else return;
+            }
+            self.ended = true;
+            std.debug.print("GAME ENDED!!!\n", .{});
+        } else {
+            std.debug.print("{s} MOVES AGAIN!!!\n", .{@tagName(self.curr_team.color)});
+        }
     }
 
     pub fn move(self: *Self, piece_idx: Piece) void {
         const curr_piece: i7 = self.curr_team.pieces[@intFromEnum(piece_idx)];
 
-        assert(self.dice_num != 6 or curr_piece == -1);
+        assert(self.dice_num == 6 or curr_piece != -1);
         assert(self.dice_num != 0 and self.dice_rolled == true);
-        assert(curr_piece + self.dice_num < total_available_moves);
+        assert(curr_piece + self.dice_num <= total_available_moves);
 
         if (curr_piece == -1) {
             self.curr_team.pieces[@intFromEnum(piece_idx)] = 0;
@@ -76,13 +95,42 @@ pub const Game = struct {
         }
 
         const new_pos = self.curr_team.pieces[@intFromEnum(piece_idx)];
-        if (isSafe(new_pos)) {
-            std.debug.print("safe place\n", .{});
+        if (!isSafe(new_pos) and new_pos < total_available_moves - 6) {
+            var other: ?struct { *Team, Piece } = null;
+            for (self.teams) |team| {
+                if (team.color == self.curr_team.color) continue;
+
+                if (std.mem.indexOfScalar(i7, &team.pieces, new_pos)) |i| {
+                    assert(other == null);
+
+                    other = .{ team, @enumFromInt(i) };
+                }
+            }
+
+            if (other) |o| {
+                const team, const piece = o;
+                team.pieces[@intFromEnum(piece)] = -1;
+
+                std.debug.print("HIT {s}\n", .{@tagName(team.color)});
+            }
         }
     }
 
-    pub fn isSafe(pos: i7) bool {
-        return std.simd.firstIndexOfValue(safeIndexes, pos) != null;
+    fn hasWon(team: *Team) bool {
+        if (team.ended_at > 0) return true;
+
+        var has_won: bool = true;
+        for (team.pieces) |p| {
+            if (p != total_available_moves) {
+                has_won = false;
+                break;
+            }
+        }
+        return has_won;
+    }
+
+    fn isSafe(pos: i7) bool {
+        return std.mem.indexOfScalar(i7, &safeIndexes, pos) != null;
     }
 };
 
