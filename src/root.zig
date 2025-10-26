@@ -1,33 +1,22 @@
 const std = @import("std");
 const assert = std.debug.assert;
+const bitset = std.bit_set;
 
-const total_available_moves = 55;
+const moves_per_player_ground = 13;
+const total_moves_play_area = 4 * moves_per_player_ground;
+const total_moves = total_moves_play_area + 6;
 
 pub const Piece = enum(u2) { _ };
 pub const Color = enum { red, green, blue, yellow };
 
 pub const Team = struct {
-    pieces: [4]i7 = .{ -1, -1, -1, -1 },
-    color: Color,
+    pieces: std.EnumArray(Piece, i7),
     ended_at: isize = -1,
+    num: u2,
 
-    pub fn init(color: Color) Team {
-        return .{ .color = color };
-    }
-};
+    const Self = @This();
 
-pub const Game = struct {
-    move_num: isize = 0,
-
-    teams: []*Team,
-    curr_team: *Team,
-
-    dice_rolled: bool = false,
-    dice_num: u3 = 0,
-
-    ended: bool = false,
-
-    const safeIndexes = blk: {
+    const safe_positions = blk: {
         var p: [8]i7 = @splat(0);
         for (1..8) |i| {
             p[i] = p[i - 1] + if (i % 2 != 0) 8 else 5;
@@ -35,103 +24,191 @@ pub const Game = struct {
         break :blk p;
     };
 
-    const Self = @This();
-
-    pub fn init(teams: []*Team) Game {
-        assert(teams.len >= 2 and teams.len <= 4);
-        return .{ .teams = teams, .curr_team = teams[0] };
+    inline fn isSafePos(pos: i7) bool {
+        return if (pos > total_moves_play_area - 1) return true else {
+            return std.mem.indexOfScalar(i7, &safe_positions, pos) != null;
+        };
     }
 
-    pub fn rollDice(self: *Self) void {
-        self.dice_num = std.crypto.random.intRangeAtMost(u3, 1, 6);
-        self.dice_rolled = true;
+    pub fn init(num: u2) Team {
+        return .{ .num = num, .pieces = .initFill(-1) };
     }
 
-    pub fn availableMoves(self: *Self) [4]bool {
-        if (!self.dice_rolled) return @splat(false);
+    pub fn calcPieceUnsafeGlobalPos(self: Self, piece: Piece) ?i7 {
+        const piece_pos = self.pieces.get(piece);
 
-        var moves: [4]bool = undefined;
-        for (self.curr_team.pieces, 0..) |piece, i| {
-            moves[i] =
-                (piece != -1 or self.dice_num == 6) and
-                (piece + self.dice_num <= total_available_moves);
+        if (isSafePos(piece_pos)) return null;
+
+        const team_offset: i7 = self.num;
+        const piece_global_pos: i7 = @mod(
+            piece_pos + team_offset * moves_per_player_ground,
+            total_moves_play_area,
+        );
+        return piece_global_pos;
+    }
+
+    pub fn hasPieceAtUnsafeGlobalPos(self: *Self, global_pos: i7) ?Piece {
+        var it = self.pieces.iterator();
+        while (it.next()) |entry| {
+            if (entry.value.* == -1) continue;
+            if (entry.value.* > total_moves_play_area) continue;
+
+            const team_offset: i7 = self.num;
+            const piece_global_pos: i7 = @mod(
+                entry.value.* + team_offset * moves_per_player_ground,
+                total_moves_play_area,
+            );
+
+            if (piece_global_pos == global_pos) return entry.key;
         }
-        return moves;
+        return null;
     }
 
-    pub fn next(self: *Self) void {
-        assert(self.dice_num != 0 and self.dice_rolled == true);
-        self.dice_rolled = false;
-        self.move_num += 1;
-
-        if (self.dice_num != 6) {
-            for (0..self.teams.len - 1) |_| {
-                const curr_team_idx = std.mem.indexOfScalar(*Team, self.teams, self.curr_team).?;
-                self.curr_team = self.teams[(curr_team_idx + 1) % self.teams.len];
-
-                if (hasWon(self.curr_team)) {
-                    if (self.curr_team.ended_at == -1) self.curr_team.ended_at = self.move_num;
-                    continue;
-                } else return;
-            }
-            self.ended = true;
-            std.debug.print("GAME ENDED!!!\n", .{});
-        } else {
-            std.debug.print("{s} MOVES AGAIN!!!\n", .{@tagName(self.curr_team.color)});
-        }
+    pub fn movePiece(self: *Self, piece: Piece, new_pos: i7) void {
+        self.pieces.set(piece, new_pos);
     }
 
-    pub fn move(self: *Self, piece_idx: Piece) void {
-        const curr_piece: i7 = self.curr_team.pieces[@intFromEnum(piece_idx)];
+    pub fn calcEnded(self: *Self, move_num: isize) void {
+        if (self.ended_at > 0) return;
 
-        assert(self.dice_num == 6 or curr_piece != -1);
-        assert(self.dice_num != 0 and self.dice_rolled == true);
-        assert(curr_piece + self.dice_num <= total_available_moves);
-
-        if (curr_piece == -1) {
-            self.curr_team.pieces[@intFromEnum(piece_idx)] = 0;
-        } else {
-            self.curr_team.pieces[@intFromEnum(piece_idx)] += self.dice_num;
-        }
-
-        const new_pos = self.curr_team.pieces[@intFromEnum(piece_idx)];
-        if (!isSafe(new_pos) and new_pos < total_available_moves - 6) {
-            var other: ?struct { *Team, Piece } = null;
-            for (self.teams) |team| {
-                if (team.color == self.curr_team.color) continue;
-
-                if (std.mem.indexOfScalar(i7, &team.pieces, new_pos)) |i| {
-                    assert(other == null);
-
-                    other = .{ team, @enumFromInt(i) };
-                }
-            }
-
-            if (other) |o| {
-                const team, const piece = o;
-                team.pieces[@intFromEnum(piece)] = -1;
-
-                std.debug.print("HIT {s}\n", .{@tagName(team.color)});
-            }
-        }
-    }
-
-    fn hasWon(team: *Team) bool {
-        if (team.ended_at > 0) return true;
+        var it = self.pieces.iterator();
 
         var has_won: bool = true;
-        for (team.pieces) |p| {
-            if (p != total_available_moves) {
+        while (it.next()) |item| {
+            if (item.value.* != total_moves) {
                 has_won = false;
                 break;
             }
         }
-        return has_won;
+
+        if (has_won) self.ended_at = move_num;
+    }
+};
+
+pub const Dice = struct {
+    num: u3 = 0,
+    used: bool = true,
+    rng: std.Random,
+
+    const Self = @This();
+
+    pub fn init(prng: std.Random) Dice {
+        return .{ .rng = prng };
     }
 
-    fn isSafe(pos: i7) bool {
-        return std.mem.indexOfScalar(i7, &safeIndexes, pos) != null;
+    pub fn prepareNext(self: *Self) error{NotUsed}!u3 {
+        if (!self.used) return error.NotUsed;
+        self.used = false;
+        self.num = self.rng.intRangeAtMost(u3, 1, 6);
+        return self.num;
     }
+
+    pub fn takeNext(self: *Self) error{Used}!u3 {
+        if (self.used) return error.Used;
+        self.used = true;
+        return self.num;
+    }
+};
+
+pub const Game = struct {
+    teams: *std.EnumMap(Color, Team),
+    dice: Dice,
+    curr: Color,
+
+    move_num: isize = 0,
+    ended: bool = false,
+
+    const Self = @This();
+
+    pub fn init(random: std.Random, teams: *std.EnumMap(Color, Team)) error{NotEnoughPlayers}!Game {
+        if (teams.count() < 2) return error.NotEnoughPlayers;
+
+        var it = teams.iterator();
+
+        return .{
+            .curr = it.next().?.key,
+            .dice = .init(random),
+            .teams = teams,
+        };
+    }
+
+    pub fn availableMoves(self: *Self, team_color: Color) bitset.IntegerBitSet(4) {
+        if (team_color != self.curr) return .initEmpty();
+
+        var curr = self.teams.getAssertContains(team_color);
+        var iter = curr.pieces.iterator();
+
+        var moves: bitset.IntegerBitSet(4) = .initEmpty();
+        var i: usize = 0;
+
+        while (iter.next()) |entry| : (i += 1) {
+            const piece_pos = entry.value.*;
+            const can_move = piece_pos != -1 or self.dice.num == 6;
+            const has_room = piece_pos + self.dice.num <= total_moves_play_area;
+
+            if (can_move and has_room) moves.set(i);
+        }
+
+        return moves;
+    }
+
+    pub fn move(self: *Self, piece: Piece) !void {
+        const log = std.log.scoped(.move);
+
+        if (self.availableMoves(self.curr).count() == 0) return error.NoAvailableMove;
+
+        var curr_team = self.teams.getPtrAssertContains(self.curr);
+
+        const curr_pos: i7 = curr_team.pieces.get(piece);
+        const diceNum = try self.dice.takeNext();
+
+        if (curr_pos == -1) {
+            curr_team.movePiece(piece, 0);
+            log.info("moved piece out", .{});
+        } else {
+            curr_team.movePiece(piece, curr_pos + diceNum);
+            log.info("moved piece by {}", .{diceNum});
+        }
+
+        if (curr_team.calcPieceUnsafeGlobalPos(piece)) |go| {
+            log.info("piece has unsafe global pos {}", .{go});
+
+            var it = self.teams.iterator();
+
+            while (it.next()) |entry| {
+                if (entry.key == self.curr) continue;
+
+                if (entry.value.hasPieceAtUnsafeGlobalPos(go)) |p| {
+                    log.info("piece has hit another piece {s}", .{@tagName(entry.key)});
+                    entry.value.movePiece(p, -1);
+                }
+            }
+        }
+    }
+
+    pub fn forward(self: *Self) !void {
+        if (!self.dice.used) return error.DicePreparedNotUsed;
+
+        self.move_num += 1;
+
+        self.teams.getPtrAssertContains(self.curr).calcEnded(self.move_num);
+
+        if (self.dice.num != 6) {
+            const curr: u4 = @intFromEnum(self.curr);
+            self.curr = @enumFromInt((curr + 1) % self.teams.count());
+        }
+    }
+
+    // fn hasHit(self: *Self, moving_piece: Piece, other_team: *Team) ?Piece {
+    //     const curr_team_idx = std.mem.indexOfScalar(*Team, self.teams, self.curr_team).?;
+    //     const other_team_idx = std.mem.indexOfScalar(*Team, self.teams, other_team).?;
+    //
+    //     const pos = self.curr_team[@intFromEnum(moving_piece)];
+    //
+    //     // 0 - 3 = -3 * 14 = 42
+    //     // 0 == 42
+    //     const diff = curr_team_idx - other_team_idx;
+    // }
 };
 
 test Game {
@@ -251,9 +328,11 @@ pub const Board = struct {
         };
     };
 
-    fn indexes(self: *const @This(), team: *const Team, idx: usize) [4]usize {
+    fn indexes(self: *const @This(), team: *const Team) [4]usize {
+        const idx: usize = team.num;
+
         var o: [4]usize = undefined;
-        for (team.pieces, 0..) |pos, piece_idx| {
+        for (team.pieces.values, 0..) |pos, piece_idx| {
             if (pos == -1) {
                 o[piece_idx] = self.home_indexes[(4 * idx) + piece_idx];
             } else if (pos >= 0 and pos <= 50) {
@@ -276,13 +355,15 @@ pub const Board = struct {
         pos: usize,
     };
 
-    pub fn print(self: *const @This(), buf: []u8, teams: []*Team) !void {
+    pub fn print(self: *const @This(), buf: []u8, teams: *std.EnumMap(Color, Team)) !void {
         var printables: [16 + 8]Printable = undefined;
 
-        for (teams, 0..) |team, i| {
-            for (self.indexes(team, i), 0..) |pos, offset| {
-                printables[i * teams.len + offset] = .{
-                    .marker = colored("◉", team.color),
+        var it = teams.iterator();
+
+        while (it.next()) |entry| {
+            for (self.indexes(entry.value), 0..) |pos, offset| {
+                printables[entry.value.num * teams.count() + offset] = .{
+                    .marker = colored("◉", entry.key),
                     .pos = pos,
                 };
             }
@@ -303,7 +384,7 @@ pub const Board = struct {
                 };
             } else {
                 printables[16 + i] = .{
-                    .marker = "☆",
+                    .marker = colored("☆", color),
                     .pos = self.path_indexes[p],
                 };
             }

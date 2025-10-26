@@ -1,59 +1,59 @@
 const std = @import("std");
 const ludo = @import("ludo");
+const log = std.log.scoped(.game);
 
 const lib = @import("ludo");
+const Color = lib.Color;
 const Team = lib.Team;
 const Game = lib.Game;
 const Board = lib.Board;
 const Piece = lib.Piece;
 
 pub fn main() !void {
-    var team_red: Team = .init(.red);
-    var team_blue: Team = .init(.blue);
-    var team_green: Team = .init(.green);
-    var team_yellow: Team = .init(.yellow);
+    var teams: std.EnumMap(Color, Team) = .init(.{
+        .red = .init(0),
+        .green = .init(1),
+        .blue = .init(2),
+        .yellow = .init(3),
+    });
 
-    var teams: [4]*Team = .{
-        &team_red,
-        &team_green,
-        &team_blue,
-        &team_yellow,
-    };
+    var prng = std.Random.DefaultPrng.init(100);
+    const seeded_random = std.Random.DefaultPrng.random(&prng);
 
-    var game: Game = .init(&teams);
+    var game: Game = try .init(seeded_random, &teams);
+
+    game.curr = .yellow;
+
+    // _ = try game.dice.prepareNext();
+    game.dice.used = false;
+    game.dice.num = 6;
 
     const board: Board = .init;
+    const moves = game.availableMoves(.red);
 
-    var print_buf: [2048]u8 = undefined;
-    while (game.ended != true) {
-        std.debug.print("\x1b[1J\x1b[?2026h", .{});
+    try game.move(@enumFromInt(0));
 
-        game.rollDice();
+    // _ = try game.dice.prepareNext();
+    game.dice.used = false;
+    game.dice.num = 3;
 
-        std.debug.print("{s}: DICE {}\n", .{ @tagName(game.curr_team.color), game.dice_num });
-        std.debug.print("{s}: POS {any}\n", .{ @tagName(game.curr_team.color), game.curr_team.pieces });
+    try game.move(@enumFromInt(0));
 
-        const moves = game.availableMoves();
+    game.dice.used = false;
+    game.dice.num = 5;
 
-        std.debug.print("{s}: MOVES {any}\n", .{ @tagName(game.curr_team.color), moves });
+    try game.move(@enumFromInt(0));
 
-        if (std.mem.indexOfScalar(bool, &moves, true)) |idx| {
-            std.debug.print("{s}: MOVING {}\n", .{ @tagName(game.curr_team.color), idx });
+    game.dice.used = false;
+    game.dice.num = 4;
 
-            game.move(@enumFromInt(idx));
-        }
+    try game.move(@enumFromInt(0));
 
-        std.debug.print("{s}: NEXT\n", .{@tagName(game.curr_team.color)});
-        game.next();
+    try game.forward();
 
-        try board.print(&print_buf, game.teams);
+    log.info("{} {} {} {}", .{ moves.isSet(0), moves.isSet(1), moves.isSet(2), moves.isSet(3) });
+    log.info("{}", .{game.teams.getAssertContains(.yellow).pieces});
 
-        std.debug.print("\x1b[?2026l", .{});
-        std.Thread.sleep(4000 * 1000 * 1000);
-    }
-
-    std.debug.print("SCORES: \n", .{});
-    for (game.teams) |team| {
-        std.debug.print("TEAM {s:<7}: at move {}\n", .{ @tagName(team.color), team.ended_at });
-    }
+    var buf: [2048]u8 = undefined;
+    try board.print(&buf, &teams);
 }

@@ -4,21 +4,23 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const mod = b.addModule("ludo", .{
+    const lib_mod = b.addModule("ludo", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
     });
 
+    const root_mod = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "ludo", .module = lib_mod },
+        },
+    });
+
     const exe = b.addExecutable(.{
         .name = "ludo",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "ludo", .module = mod },
-            },
-        }),
+        .root_module = root_mod,
     });
 
     b.installArtifact(exe);
@@ -31,8 +33,16 @@ pub fn build(b: *std.Build) void {
 
     if (b.args) |args| run_cmd.addArgs(args);
 
+    const exe_check = b.addExecutable(.{
+        .name = "ludo",
+        .root_module = root_mod,
+    });
+
+    const check = b.step("check", "Check if ludo compiles");
+    check.dependOn(&exe_check.step);
+
     const mod_tests = b.addTest(.{
-        .root_module = mod,
+        .root_module = lib_mod,
     });
     const exe_tests = b.addTest(.{
         .root_module = exe.root_module,
