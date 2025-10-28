@@ -18,9 +18,7 @@ pub const Team = struct {
 
     const safe_positions = blk: {
         var p: [8]i7 = @splat(0);
-        for (1..8) |i| {
-            p[i] = p[i - 1] + if (i % 2 != 0) 8 else 5;
-        }
+        for (1..8) |i| p[i] = p[i - 1] + if (i % 2 != 0) 8 else 5;
         break :blk p;
     };
 
@@ -87,26 +85,33 @@ pub const Team = struct {
 
 pub const Dice = struct {
     num: u3 = 0,
-    used: bool = true,
+    mod: enum { NotRolled, Rolled, Used },
     rng: std.Random,
 
     const Self = @This();
 
     pub fn init(prng: std.Random) Dice {
-        return .{ .rng = prng };
+        return .{ .rng = prng, .mod = .NotRolled };
     }
 
-    pub fn prepareNext(self: *Self) error{NotUsed}!u3 {
-        if (!self.used) return error.NotUsed;
-        self.used = false;
+    pub fn roll(self: *Self) error{NotRollable}!u3 {
+        if (self.mod != .NotRolled) return error.NotRollable;
+        self.mod = .Rolled;
         self.num = self.rng.intRangeAtMost(u3, 1, 6);
         return self.num;
     }
 
-    pub fn takeNext(self: *Self) error{Used}!u3 {
-        if (self.used) return error.Used;
-        self.used = true;
+    pub fn setUsed(self: *Self) error{NotUsable}!u3 {
+        if (self.mod != .Rolled) return error.NotUsable;
+        self.mod = .Used;
         return self.num;
+    }
+
+    pub fn reset(self: *Self) error{NotResettable}!void {
+        if (self.mod != .Used) return error.NotResettable;
+        self.mod = .NotRolled;
+        self.num = 0;
+        return;
     }
 };
 
@@ -155,7 +160,9 @@ pub const Game = struct {
     pub fn move(self: *Self, piece: Piece) !void {
         const log = std.log.scoped(.move);
 
-        if (self.availableMoves(self.curr).count() == 0) return error.NoAvailableMove;
+        const moves = self.availableMoves(self.curr);
+        if (moves.count() == 0) return error.NoAvailableMove;
+        if (!moves.isSet(@intFromEnum(piece))) return error.IllegalMove;
 
         var curr_team = self.teams.getPtrAssertContains(self.curr);
 
@@ -187,81 +194,41 @@ pub const Game = struct {
     }
 
     pub fn forward(self: *Self) !void {
-        if (!self.dice.used) return error.DicePreparedNotUsed;
+        const log = std.log.scoped(.move);
+
+        if (self.ended) return error.GameEnded;
+
+        if (!self.dice.used) {
+            const moves = self.availableMoves(self.curr).count();
+            if (moves != 0) return error.DicePreparedNotUsed;
+            _ = self.dice.takeNext() catch {};
+        }
+
+        if (self.dice.num != 6) {
+            const curr: u4 = @intFromEnum(self.curr);
+            self.curr = @enumFromInt((curr + 1) % self.teams.count());
+
+            log.info("dice != 6, switching team to {}", .{self.curr});
+        } else {
+            log.info("dice == 6, keeping team as {}", .{self.curr});
+        }
+
+        if (self.dice.used) return error.DiceNotRolled;
 
         self.move_num += 1;
 
         self.teams.getPtrAssertContains(self.curr).calcEnded(self.move_num);
 
-        if (self.dice.num != 6) {
-            const curr: u4 = @intFromEnum(self.curr);
-            self.curr = @enumFromInt((curr + 1) % self.teams.count());
+        var count_team_won: u2 = 0;
+        var it = self.teams.iterator();
+
+        while (it.next()) |entry| {
+            if (entry.value.ended_at != -1) count_team_won += 1;
         }
+
+        if (count_team_won >= 3) self.ended = true;
     }
-
-    // fn hasHit(self: *Self, moving_piece: Piece, other_team: *Team) ?Piece {
-    //     const curr_team_idx = std.mem.indexOfScalar(*Team, self.teams, self.curr_team).?;
-    //     const other_team_idx = std.mem.indexOfScalar(*Team, self.teams, other_team).?;
-    //
-    //     const pos = self.curr_team[@intFromEnum(moving_piece)];
-    //
-    //     // 0 - 3 = -3 * 14 = 42
-    //     // 0 == 42
-    //     const diff = curr_team_idx - other_team_idx;
-    // }
 };
-
-test Game {
-    const expectEqual = std.testing.expectEqual;
-
-    var team_red: Team = .init(.red);
-    var team_blue: Team = .init(.blue);
-    var team_green: Team = .init(.green);
-    var team_yellow: Team = .init(.yellow);
-
-    var teams: [4]*Team = .{
-        &team_red,
-        &team_green,
-        &team_blue,
-        &team_yellow,
-    };
-
-    var game: Game = .init(&teams);
-
-    try expectEqual(game.availableMoves(), .{false} ** 4);
-
-    game.rollDice();
-
-    game.dice_num = 1;
-    try expectEqual(game.availableMoves(), .{false} ** 4);
-
-    game.dice_num = 6;
-    try expectEqual(game.availableMoves(), .{true} ** 4);
-
-    game.curr_team.pieces[0] = 55;
-    try expectEqual(game.availableMoves(), .{ false, true, true, true });
-
-    const active_team = game.curr_team;
-    game.move(@enumFromInt(1));
-
-    try expectEqual(active_team.pieces, .{ 55, 5, -1, -1 });
-    try expectEqual(game.curr_team.color, .green);
-
-    const board: Board = .init;
-
-    game.teams[0].pieces = .{ -1, -1, -1, -1 };
-    game.teams[1].pieces = .{ -1, -1, -1, -1 };
-    game.teams[2].pieces = .{ -1, -1, -1, -1 };
-    game.teams[3].pieces = .{ -1, -1, -1, -1 };
-
-    var print_buf: [2048]u8 = undefined;
-    // for (teams) |team| {
-    //     for (0..56) |i| {
-    //         team.pieces[3] = @intCast(i);
-    try board.print(&print_buf, game.teams);
-    //     }
-    // }
-}
 
 const board_map =
     \\ [ ][ ][ ][ ][ ][ ][X][Y][Z][ ][ ][ ][ ][ ][ ]

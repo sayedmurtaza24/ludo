@@ -9,6 +9,14 @@ const Game = lib.Game;
 const Board = lib.Board;
 const Piece = lib.Piece;
 
+const Input = enum {
+    @"1",
+    @"2",
+    @"3",
+    @"4",
+    r,
+};
+
 pub fn main() !void {
     var teams: std.EnumMap(Color, Team) = .init(.{
         .red = .init(0),
@@ -22,38 +30,68 @@ pub fn main() !void {
 
     var game: Game = try .init(seeded_random, &teams);
 
-    game.curr = .yellow;
-
-    // _ = try game.dice.prepareNext();
-    game.dice.used = false;
-    game.dice.num = 6;
-
     const board: Board = .init;
-    const moves = game.availableMoves(.red);
 
-    try game.move(@enumFromInt(0));
+    var board_buf: [2048]u8 = undefined;
+    var stdin_buf: [2]u8 = undefined;
 
-    // _ = try game.dice.prepareNext();
-    game.dice.used = false;
-    game.dice.num = 3;
+    var stdin = std.fs.File.stdin().reader(&stdin_buf);
+    const reader = &stdin.interface;
 
-    try game.move(@enumFromInt(0));
+    while (true) : (reader.toss(1)) {
+        log.info("team: {s}", .{@tagName(game.curr)});
 
-    game.dice.used = false;
-    game.dice.num = 5;
+        if (game.dice.used) {
+            log.info("press r to roll dice", .{});
+        } else {
+            const moves = game.availableMoves(game.curr);
 
-    try game.move(@enumFromInt(0));
+            for (0..4) |i| {
+                if (moves.isSet(i)) log.info("press {} to move piece {}", .{ i + 1, i + 1 });
+            }
+        }
 
-    game.dice.used = false;
-    game.dice.num = 4;
+        const input = reader.takeDelimiterExclusive('\n') catch |e| switch (e) {
+            error.StreamTooLong => {
+                log.err("invalid input", .{});
+                continue;
+            },
+            else => unreachable,
+        };
+        if (input.len == 0) {
+            log.info("input invalid", .{});
+            continue;
+        }
 
-    try game.move(@enumFromInt(0));
+        if (std.meta.stringToEnum(Input, input)) |i| {
+            switch (i) {
+                .r => {
+                    const diceNum = game.dice.prepareNext() catch {
+                        log.err("dice already rolled", .{});
+                        continue;
+                    };
+                    log.info("dice roll: {}", .{diceNum});
+                },
+                .@"1", .@"2", .@"3", .@"4" => {
+                    const piece_idx: u2 = @intCast(@intFromEnum(i));
+                    const piece: Piece = @enumFromInt(piece_idx);
 
-    try game.forward();
+                    game.move(piece) catch |e| switch (e) {
+                        error.NoAvailableMove => log.err("you can't move", .{}),
+                        error.IllegalMove => log.err("illegal move", .{}),
+                        error.Used => continue,
+                    };
+                },
+            }
+        }
 
-    log.info("{} {} {} {}", .{ moves.isSet(0), moves.isSet(1), moves.isSet(2), moves.isSet(3) });
-    log.info("{}", .{game.teams.getAssertContains(.yellow).pieces});
+        game.forward() catch |e| switch (e) {
+            error.DicePreparedNotUsed => log.info("must move piece now", .{}),
+            error.GameEnded => break,
+            error.DiceNotRolled => log.err("must roll dice first", .{}),
+        };
+        try board.print(&board_buf, &teams);
+    }
 
-    var buf: [2048]u8 = undefined;
-    try board.print(&buf, &teams);
+    log.info("game ended {}", .{game});
 }
