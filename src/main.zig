@@ -15,7 +15,15 @@ const Input = enum {
     @"3",
     @"4",
     r,
+    r1,
+    r2,
+    r3,
+    r4,
+    r5,
+    r6,
 };
+
+var buf: [2048 + 10 + 128]u8 = undefined;
 
 pub fn main() !void {
     var teams: std.EnumMap(Color, Team) = .init(.{
@@ -32,17 +40,17 @@ pub fn main() !void {
 
     const board: Board = .init;
 
-    var board_buf: [2048]u8 = undefined;
-    var stdin_buf: [2]u8 = undefined;
+    var stdin_r = std.fs.File.stdin().reader(buf[2048..][0..10]);
+    const stdin = &stdin_r.interface;
 
-    var stdin = std.fs.File.stdin().reader(&stdin_buf);
-    const reader = &stdin.interface;
+    var stdout_r = std.fs.File.stdout().writer(buf[2048 + 10 ..][0..128]);
+    const stdout = &stdout_r.interface;
 
-    while (true) : (reader.toss(1)) {
+    while (true) : (stdin.toss(1)) {
         log.info("team: {s}", .{@tagName(game.curr)});
 
-        if (game.dice.used) {
-            log.info("press r to roll dice", .{});
+        if (game.dice.mod == .NotRolled) {
+            log.info("press r to roll dice randomly or r[1-6] to roll deterministically", .{});
         } else {
             const moves = game.availableMoves(game.curr);
 
@@ -51,7 +59,9 @@ pub fn main() !void {
             }
         }
 
-        const input = reader.takeDelimiterExclusive('\n') catch |e| switch (e) {
+        _ = try stdout.write("input: ");
+        _ = try stdout.flush();
+        const input = stdin.takeDelimiterExclusive('\n') catch |e| switch (e) {
             error.StreamTooLong => {
                 log.err("invalid input", .{});
                 continue;
@@ -66,7 +76,7 @@ pub fn main() !void {
         if (std.meta.stringToEnum(Input, input)) |i| {
             switch (i) {
                 .r => {
-                    const diceNum = game.dice.prepareNext() catch {
+                    const diceNum = game.dice.roll() catch {
                         log.err("dice already rolled", .{});
                         continue;
                     };
@@ -79,18 +89,34 @@ pub fn main() !void {
                     game.move(piece) catch |e| switch (e) {
                         error.NoAvailableMove => log.err("you can't move", .{}),
                         error.IllegalMove => log.err("illegal move", .{}),
-                        error.Used => continue,
+                        error.NotUsable => log.err("dice not usable", .{}),
                     };
+                },
+                .r1, .r2, .r3, .r4, .r5, .r6 => |d| {
+                    const num: u3 = switch (d) {
+                        .r1 => 1,
+                        .r2 => 2,
+                        .r3 => 3,
+                        .r4 => 4,
+                        .r5 => 5,
+                        .r6 => 6,
+                        else => unreachable,
+                    };
+                    const diceNum = game.dice.rollWithNum(num) catch {
+                        log.err("dice already rolled", .{});
+                        continue;
+                    };
+                    log.info("dice roll: {}", .{diceNum});
                 },
             }
         }
 
         game.forward() catch |e| switch (e) {
-            error.DicePreparedNotUsed => log.info("must move piece now", .{}),
-            error.GameEnded => break,
+            error.DiceRolledNotUsed => log.info("must move piece now", .{}),
             error.DiceNotRolled => log.err("must roll dice first", .{}),
+            error.GameEnded => break,
         };
-        try board.print(&board_buf, &teams);
+        try board.print(buf[0..2048], &teams);
     }
 
     log.info("game ended {}", .{game});
